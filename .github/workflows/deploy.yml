@@ -91,16 +91,16 @@ jobs:
           if ! echo "$EXISTING" | grep -q '^VAPID_PRIVATE_KEY$'; then
             KEYS=$(npx -y web-push@3.6.7 generate-vapid-keys --json)
             PUB=$(echo "$KEYS" | jq -r .publicKey); PRIV=$(echo "$KEYS" | jq -r .privateKey)
-            supabase secrets set --project-ref "$REF" VAPID_PUBLIC_KEY="$PUB" VAPID_PRIVATE_KEY="$PRIV" VAPID_SUBJECT="mailto:noreply@${REF}.supabase.co"
+            supabase secrets set --yes --project-ref "$REF" VAPID_PUBLIC_KEY="$PUB" VAPID_PRIVATE_KEY="$PRIV" VAPID_SUBJECT="mailto:noreply@${REF}.supabase.co"
             echo "NEW_VAPID=$PUB" >> "$GITHUB_ENV"
           fi
-          [ -n "$ANTHROPIC_API_KEY" ] && supabase secrets set --project-ref "$REF" ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY"
-          [ -n "$STRAVA_CLIENT_SECRET" ] && supabase secrets set --project-ref "$REF" STRAVA_CLIENT_ID="$STRAVA_CLIENT_ID" STRAVA_CLIENT_SECRET="$STRAVA_CLIENT_SECRET"
+          [ -n "$ANTHROPIC_API_KEY" ] && supabase secrets set --yes --project-ref "$REF" ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY"
+          [ -n "$STRAVA_CLIENT_SECRET" ] && supabase secrets set --yes --project-ref "$REF" STRAVA_CLIENT_ID="$STRAVA_CLIENT_ID" STRAVA_CLIENT_SECRET="$STRAVA_CLIENT_SECRET"
           true
 
       - name: Funções (IA, Strava, notificações)
         if: steps.check.outputs.ok == 'true'
-        run: supabase functions deploy --project-ref "$REF"
+        run: supabase functions deploy --yes --project-ref "$REF" || supabase functions deploy --project-ref "$REF"
 
       - name: Preencher js/config.js
         if: steps.check.outputs.ok == 'true'
