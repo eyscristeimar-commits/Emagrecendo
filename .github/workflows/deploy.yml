@@ -65,7 +65,7 @@ jobs:
           SQL
           supabase link --project-ref "$REF"
           # a CLI lê a senha de SUPABASE_DB_PASSWORD; as versões mudaram o nome da opção, então tenta as duas
-          supabase db push --linked --yes || supabase db push --remote --yes
+          supabase db push --remote --yes || supabase db push --linked --yes
 
       - name: Login por e-mail (código de 6 dígitos)
         if: steps.check.outputs.ok == 'true'
@@ -79,8 +79,10 @@ jobs:
             mailer_subjects_confirmation: "Seu código de acesso ao Foco Total",
             mailer_templates_confirmation_content: "<h2>Foco Total</h2><p>Seu código de acesso é:</p><h1 style=\"letter-spacing:6px\">{{ .Token }}</h1><p>Ou toque no link: <a href=\"{{ .ConfirmationURL }}\">entrar no app</a></p>"
           }')
-          curl -fsS -X PATCH "https://api.supabase.com/v1/projects/$REF/config/auth" \
-            -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" -H "Content-Type: application/json" -d "$BODY" > /dev/null
+          CODE=$(curl -sS -o resp.txt -w "%{http_code}" -X PATCH "https://api.supabase.com/v1/projects/$REF/config/auth" \
+            -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" -H "Content-Type: application/json" -d "$BODY")
+          echo "HTTP $CODE"; head -c 600 resp.txt; echo; rm -f resp.txt
+          [ "$CODE" -lt 300 ] || echo "::warning::Não foi possível ajustar o e-mail de login automaticamente (HTTP $CODE)."
 
       - name: Segredos das funções
         if: steps.check.outputs.ok == 'true'
@@ -103,7 +105,9 @@ jobs:
       - name: Preencher js/config.js
         if: steps.check.outputs.ok == 'true'
         run: |
-          ANON=$(curl -fsS "https://api.supabase.com/v1/projects/$REF/api-keys" -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" | jq -r '.[] | select(.name=="anon") | .api_key')
+          ANON=$(curl -fsS "https://api.supabase.com/v1/projects/$REF/api-keys" -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" | jq -r '.[] | select(.name=="anon") | .api_key' || true)
+          [ -n "$ANON" ] || ANON=$(supabase projects api-keys --project-ref "$REF" -o json | jq -r '.[] | select(.name=="anon") | .api_key')
+          [ -n "$ANON" ] || { echo "::error::Não consegui ler a chave anon"; exit 1; }
           sed -i -E "s#SUPABASE_URL: '[^']*'#SUPABASE_URL: 'https://$REF.supabase.co'#" js/config.js
           sed -i -E "s#SUPABASE_ANON_KEY: '[^']*'#SUPABASE_ANON_KEY: '$ANON'#" js/config.js
           [ -n "$NEW_VAPID" ] && sed -i -E "s#VAPID_PUBLIC_KEY: '[^']*'#VAPID_PUBLIC_KEY: '$NEW_VAPID'#" js/config.js
