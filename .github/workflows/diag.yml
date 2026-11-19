@@ -1,0 +1,15 @@
+name: Diagnostico
+on: workflow_dispatch
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    env:
+      T: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      REF: ${{ secrets.SUPABASE_PROJECT_REF }}
+    steps:
+      - run: |
+          q() { jq -n --arg q "$1" '{query:$q}' | curl -sS -X POST "https://api.supabase.com/v1/projects/$REF/database/query" -H "Authorization: Bearer $T" -H "Content-Type: application/json" -d @- ; echo; }
+          q "select count(*) total, count(email_confirmed_at) confirmados from auth.users"
+          q "select grantee, table_name, string_agg(privilege_type, ',') from information_schema.role_table_grants where table_schema='public' and grantee in ('anon','authenticated') group by 1,2 order by 2"
+          q "select count(*) from public.profiles"
+          curl -sS "https://api.supabase.com/v1/projects/$REF/config/auth" -H "Authorization: Bearer $T" | jq '{site_url, mailer_autoconfirm, disable_signup, external_email_enabled}'
