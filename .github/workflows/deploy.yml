@@ -63,8 +63,9 @@ jobs:
             );
           \$\$);
           SQL
-          supabase link --project-ref "$REF" --password "$SUPABASE_DB_PASSWORD"
-          supabase db push --password "$SUPABASE_DB_PASSWORD"
+          supabase link --project-ref "$REF"
+          # a CLI lê a senha de SUPABASE_DB_PASSWORD; as versões mudaram o nome da opção, então tenta as duas
+          supabase db push --linked --yes || supabase db push --remote --yes
 
       - name: Login por e-mail (código de 6 dígitos)
         if: steps.check.outputs.ok == 'true'
