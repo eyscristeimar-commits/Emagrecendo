@@ -152,9 +152,8 @@ function renderLogin(app) {
   $('#go').onclick = go;
   $('#pass').onkeydown = (e) => { if (e.key === 'Enter') $('#go').click(); };
   $('#forgot').onclick = async () => {
-    if (!/^\S+@\S+\.\S+$/.test(email())) return toast('Digite seu e-mail primeiro', 'err');
-    try { await db.resetPassword(email()); toast('Enviamos um link para criar uma senha nova. Confira o e-mail (e o spam).'); }
-    catch (err) { toast(err.message, 'err'); }
+    // o e-mail gratuito do servidor não entrega para endereços comuns; a troca é feita pelo administrador
+    toast('Peça ao administrador do grupo uma senha provisória. Depois de entrar, troque em Ajustes.');
   };
 }
 
@@ -369,11 +368,18 @@ function settingsModal() {
       <p class="muted sm">Sem servidor, você pode colar uma chave da API da Anthropic. Ela fica salva só neste aparelho e nunca vai no link.</p>
       <div class="row"><input id="key" type="password" class="grow" placeholder="sk-ant-…" value="${esc(getPersonalKey())}"><button class="btn" id="savekey">Salvar</button></div>`}
     ${local ? `<h4 class="mt">Backup</h4><div class="row"><button class="btn ghost grow" id="exp">⬇️ Exportar dados</button><button class="btn ghost grow" id="imp">⬆️ Importar</button></div>` : ''}
+    ${!local ? `<h4 class="mt">Trocar senha</h4><div class="row"><input id="newpw" type="password" class="grow" autocomplete="new-password" placeholder="Nova senha (mín. 6)"><button class="btn" id="savepw">Trocar</button></div>` : ''}
     <div class="row mt">${!local ? '<button class="btn ghost danger grow" id="out">Sair</button>' : ''}</div>
     <p class="muted sm mt center">${esc(CONFIG.APP_NAME)} · alimentação, hidratação, treinos e hábitos naturais.</p>`);
   body.querySelector('#edit').onclick = () => { close(); profileForm(me); };
   body.querySelector('#savekey')?.addEventListener('click', () => { setPersonalKey(body.querySelector('#key').value.trim()); toast('Chave salva neste aparelho ✅'); close(); render(); });
   body.querySelector('#out')?.addEventListener('click', () => db.logout());
+  body.querySelector('#savepw')?.addEventListener('click', async () => {
+    const v = body.querySelector('#newpw').value;
+    if (v.length < 6) return toast('A senha precisa ter pelo menos 6 caracteres', 'err');
+    try { await db.setNewPassword(v); body.querySelector('#newpw').value = ''; toast('Senha alterada ✅'); }
+    catch (err) { toast(err.message, 'err'); }
+  });
   body.querySelector('#exp')?.addEventListener('click', () => {
     const blob = new Blob([db.exportAll()], { type: 'application/json' });
     const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: `backup-foco-total-${today()}.json` });
