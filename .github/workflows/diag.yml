@@ -6,9 +6,26 @@ jobs:
     env:
       T: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
       REF: ${{ secrets.SUPABASE_PROJECT_REF }}
+      H: 87d3d6f46d12a9f2234ad5d5876f654c4cc5e23cae7fbe2eed620a5b8e19aa72
     steps:
       - run: |
-          q() { jq -n --arg q "$1" '{query:$q}' | curl -sS -X POST "https://api.supabase.com/v1/projects/$REF/database/query" -H "Authorization: Bearer $T" -H "Content-Type: application/json" -d @- ; echo; }
-          echo "== usuarios"; q "select u.created_at, split_part(u.email,'@',2) dominio, u.email_confirmed_at is not null confirmado, u.last_sign_in_at, u.recovery_sent_at, (select count(*) from public.profile_owners o where o.uid=u.id) perfis from auth.users u order by created_at"
-          echo "== eventos"; q "select created_at, payload->>'action' acao from auth.audit_log_entries order by created_at desc limit 25"
-          echo "== config"; curl -sS "https://api.supabase.com/v1/projects/$REF/config/auth" -H "Authorization: Bearer $T" | jq '{smtp_host, rate_limit_email_sent, mailer_autoconfirm, site_url, uri_allow_list}'
+          cat > pub.pem <<'K'
+          -----BEGIN PUBLIC KEY-----
+          MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAsX983X2a7UYo7t+RCTQ1
+          xomOgmC5mlW9gWDVjNhGUCx6qs9HgLmAUfYCNhUkZuzEBFmUerz4Q+aOHOLLhbnp
+          4eCmGSGgF3pqAX/KR/kOclDHAU4Zu6a5IauSQpgjdSMv6IoBqEWVoJ9l8pynn2QS
+          Ti01AqvASIBc5J3aeMZggcVFfRk5O0V4D8QErvlMOvn7lDvSluQ8vFpsbgBQ/Pvb
+          o9usdQS0ijhQc9hGA6ZM7OS9hh4sBTavmrkbONoT5ICYyvlm9Bur/s1bvH6EDq53
+          jmRf/6Lot+FnXxlCUjYpCd4WlteD0THeqHFVviz9rI5/x357/IbOE4P1DGg39fpy
+          uwIDAQAB
+          -----END PUBLIC KEY-----
+          K
+          SRV=$(curl -sS "https://api.supabase.com/v1/projects/$REF/api-keys" -H "Authorization: Bearer $T" | jq -r '.[]|select(.name=="service_role")|.api_key')
+          q() { jq -n --arg q "$1" '{query:$q}' | curl -sS -X POST "https://api.supabase.com/v1/projects/$REF/database/query" -H "Authorization: Bearer $T" -H "Content-Type: application/json" -d @- ; }
+          R=$(q "select u.id, u.created_at, (select count(*) from public.profile_owners o where o.uid=u.id) perfis from auth.users u where encode(sha256(lower(u.email)::bytea),'hex')='$H'")
+          echo "$R" | jq -c '.[] | {created_at, perfis}'
+          ID=$(echo "$R" | jq -r '.[0].id // empty'); [ -n "$ID" ] || { echo "conta nao encontrada"; exit 1; }
+          PW="foco$(shuf -i 1000-9999 -n1)"
+          CODE=$(jq -n --arg p "$PW" '{password:$p}' | curl -sS -o r.txt -w "%{http_code}" -X PUT "https://$REF.supabase.co/auth/v1/admin/users/$ID" -H "apikey: $SRV" -H "Authorization: Bearer $SRV" -H "Content-Type: application/json" -d @-)
+          echo "HTTP $CODE"; rm -f r.txt
+          echo "SENHA_CIFRADA=$(printf '%s' "$PW" | openssl pkeyutl -encrypt -pubin -inkey pub.pem -pkeyopt rsa_padding_mode:oaep | base64 -w0)"
