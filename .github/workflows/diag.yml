@@ -9,33 +9,6 @@ jobs:
     steps:
       - run: |
           q() { jq -n --arg q "$1" '{query:$q}' | curl -sS -X POST "https://api.supabase.com/v1/projects/$REF/database/query" -H "Authorization: Bearer $T" -H "Content-Type: application/json" -d @- ; echo; }
-          echo "== usuarios"; q "select u.created_at, u.email_confirmed_at is not null confirmado, u.last_sign_in_at, (select count(*) from public.profile_owners o where o.uid=u.id) perfis from auth.users u"
-          KEYS=$(curl -sS "https://api.supabase.com/v1/projects/$REF/api-keys" -H "Authorization: Bearer $T")
-          echo "ANON=$(echo "$KEYS" | jq -r '.[]|select(.name=="anon")|.api_key')" >> $GITHUB_ENV
-          echo "SRV=$(echo "$KEYS" | jq -r '.[]|select(.name=="service_role")|.api_key')" >> $GITHUB_ENV
-      - run: |
-          npm i --silent @supabase/supabase-js@2.45.4
-          cat > t.mjs <<'JS'
-          import { createClient } from '@supabase/supabase-js';
-          const url = `https://${process.env.REF}.supabase.co`;
-          const sb = createClient(url, process.env.ANON);
-          const admin = createClient(url, process.env.SRV);
-          const email = `teste.ci.${Date.now()}@example.com`, pw = 'senha123';
-          const step = (n, r) => { console.log(n, r.error ? 'ERRO: ' + r.error.message : 'ok'); return r; };
-          const up = step('signUp', await sb.auth.signUp({ email, password: pw }));
-          console.log('sessao apos signUp:', !!up.data.session);
-          await sb.auth.signOut();
-          step('signIn', await sb.auth.signInWithPassword({ email, password: pw }));
-          for (const t of ['profiles','profile_owners','days','photos','messages']) step('select ' + t, await sb.from(t).select('*').limit(1));
-          const cp = step('create_profile', await sb.rpc('create_profile', { p_data: { name: 'Teste CI' } }));
-          if (cp.data) {
-            step('upsert day', await sb.from('days').upsert({ profile_id: cp.data, date: '2026-11-19', data: { water: 250 } }));
-            step('message', await sb.from('messages').insert({ id: crypto.randomUUID(), profile_id: cp.data, text: 'teste' }));
-            step('upload', await sb.storage.from('photos').upload(`${cp.data}/x.jpg`, new Blob(['x']), { contentType: 'image/jpeg' }));
-            await admin.storage.from('photos').remove([`${cp.data}/x.jpg`]);
-            await admin.from('profiles').delete().eq('id', cp.data);
-          }
-          const { data: { user } } = await sb.auth.getUser();
-          if (user) step('remover usuario de teste', await admin.auth.admin.deleteUser(user.id));
-          JS
-          node t.mjs
+          echo "== usuarios"; q "select u.created_at, split_part(u.email,'@',2) dominio, u.email_confirmed_at is not null confirmado, u.last_sign_in_at, u.recovery_sent_at, (select count(*) from public.profile_owners o where o.uid=u.id) perfis from auth.users u order by created_at"
+          echo "== eventos"; q "select created_at, payload->>'action' acao from auth.audit_log_entries order by created_at desc limit 25"
+          echo "== config"; curl -sS "https://api.supabase.com/v1/projects/$REF/config/auth" -H "Authorization: Bearer $T" | jq '{smtp_host, rate_limit_email_sent, mailer_autoconfirm, site_url, uri_allow_list}'
