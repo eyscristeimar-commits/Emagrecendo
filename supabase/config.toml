@@ -1,0 +1,12 @@
+# Configuração mínima para o Supabase CLI (usada pelo deploy automático)
+project_id = "emagrecimento"
+
+[functions.nutrition]
+verify_jwt = true
+
+[functions.strava]
+verify_jwt = true
+
+# O agendador chama sem login (protegido pelo CRON_SECRET); o chat confere o login dentro da função.
+[functions.push]
+verify_jwt = false

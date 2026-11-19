@@ -1,0 +1,144 @@
+# Publica o app no GitHub Pages e (se os segredos existirem) configura o Supabase:
+# banco, login por e-mail, funções de IA/Strava/notificações e o agendador de lembretes.
+name: Publicar app
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: publicar
+  cancel-in-progress: false
+
+jobs:
+  servidor:
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.commit.outputs.sha }}
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+      REF: ${{ secrets.SUPABASE_PROJECT_REF }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      STRAVA_CLIENT_ID: ${{ secrets.STRAVA_CLIENT_ID }}
+      STRAVA_CLIENT_SECRET: ${{ secrets.STRAVA_CLIENT_SECRET }}
+      SITE: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verificar segredos
+        id: check
+        run: |
+          if [ -n "$SUPABASE_ACCESS_TOKEN" ] && [ -n "$SUPABASE_DB_PASSWORD" ] && [ -n "$REF" ]; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::Segredos do Supabase ainda não configurados. Publicando só o site (modo local)."
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: supabase/setup-cli@v1
+        if: steps.check.outputs.ok == 'true'
+        with:
+          version: latest
+
+      - name: Banco de dados
+        if: steps.check.outputs.ok == 'true'
+        run: |
+          REF=$(echo "$REF" | tr -d '[:space:]' | sed -E 's#https?://##; s#\.supabase\.co.*##')
+          echo "REF=$REF" >> "$GITHUB_ENV"
+          cat > supabase/migrations/20261119000100_lembretes.sql <<SQL
+          create extension if not exists pg_cron;
+          create extension if not exists pg_net;
+          select cron.schedule('lembretes', '*/5 * * * *', \$\$
+            select net.http_post(
+              url := 'https://${REF}.supabase.co/functions/v1/push',
+              headers := '{"Content-Type": "application/json"}'::jsonb,
+              body := '{"action": "tick"}'::jsonb
+            );
+          \$\$);
+          SQL
+          supabase link --project-ref "$REF" --password "$SUPABASE_DB_PASSWORD"
+          supabase db push --password "$SUPABASE_DB_PASSWORD"
+
+      - name: Login por e-mail (código de 6 dígitos)
+        if: steps.check.outputs.ok == 'true'
+        run: |
+          BODY=$(jq -n --arg site "$SITE" '{
+            site_url: $site,
+            uri_allow_list: ($site + "**"),
+            external_anonymous_users_enabled: false,
+            mailer_subjects_magic_link: "Seu código de acesso ao Foco Total",
+            mailer_templates_magic_link_content: "<h2>Foco Total</h2><p>Seu código de acesso é:</p><h1 style=\"letter-spacing:6px\">{{ .Token }}</h1><p>Ou toque no link: <a href=\"{{ .ConfirmationURL }}\">entrar no app</a></p>",
+            mailer_subjects_confirmation: "Seu código de acesso ao Foco Total",
+            mailer_templates_confirmation_content: "<h2>Foco Total</h2><p>Seu código de acesso é:</p><h1 style=\"letter-spacing:6px\">{{ .Token }}</h1><p>Ou toque no link: <a href=\"{{ .ConfirmationURL }}\">entrar no app</a></p>"
+          }')
+          curl -fsS -X PATCH "https://api.supabase.com/v1/projects/$REF/config/auth" \
+            -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" -H "Content-Type: application/json" -d "$BODY" > /dev/null
+
+      - name: Segredos das funções
+        if: steps.check.outputs.ok == 'true'
+        run: |
+          EXISTING=$(supabase secrets list --project-ref "$REF" | awk '{print $1}')
+          if ! echo "$EXISTING" | grep -q '^VAPID_PRIVATE_KEY$'; then
+            KEYS=$(npx -y web-push@3.6.7 generate-vapid-keys --json)
+            PUB=$(echo "$KEYS" | jq -r .publicKey); PRIV=$(echo "$KEYS" | jq -r .privateKey)
+            supabase secrets set --project-ref "$REF" VAPID_PUBLIC_KEY="$PUB" VAPID_PRIVATE_KEY="$PRIV" VAPID_SUBJECT="mailto:noreply@${REF}.supabase.co"
+            echo "NEW_VAPID=$PUB" >> "$GITHUB_ENV"
+          fi
+          [ -n "$ANTHROPIC_API_KEY" ] && supabase secrets set --project-ref "$REF" ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY"
+          [ -n "$STRAVA_CLIENT_SECRET" ] && supabase secrets set --project-ref "$REF" STRAVA_CLIENT_ID="$STRAVA_CLIENT_ID" STRAVA_CLIENT_SECRET="$STRAVA_CLIENT_SECRET"
+          true
+
+      - name: Funções (IA, Strava, notificações)
+        if: steps.check.outputs.ok == 'true'
+        run: supabase functions deploy --project-ref "$REF"
+
+      - name: Preencher js/config.js
+        if: steps.check.outputs.ok == 'true'
+        run: |
+          ANON=$(curl -fsS "https://api.supabase.com/v1/projects/$REF/api-keys" -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" | jq -r '.[] | select(.name=="anon") | .api_key')
+          sed -i -E "s#SUPABASE_URL: '[^']*'#SUPABASE_URL: 'https://$REF.supabase.co'#" js/config.js
+          sed -i -E "s#SUPABASE_ANON_KEY: '[^']*'#SUPABASE_ANON_KEY: '$ANON'#" js/config.js
+          [ -n "$NEW_VAPID" ] && sed -i -E "s#VAPID_PUBLIC_KEY: '[^']*'#VAPID_PUBLIC_KEY: '$NEW_VAPID'#" js/config.js
+          [ -n "$STRAVA_CLIENT_ID" ] && sed -i -E "s#STRAVA_CLIENT_ID: '[^']*'#STRAVA_CLIENT_ID: '$STRAVA_CLIENT_ID'#" js/config.js
+          true
+
+      - name: Salvar configuração
+        id: commit
+        run: |
+          rm -f supabase/migrations/20261119000100_lembretes.sql.bak
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add js/config.js supabase/migrations
+          if ! git diff --cached --quiet; then
+            git commit -m "Configura servidor do app [skip ci]"
+            git push
+          fi
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+  site:
+    needs: servidor
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.servidor.outputs.sha }}
+      - name: Montar site
+        run: |
+          mkdir _site
+          cp -r index.html manifest.json sw.js css js icons _site/
+          # versão nova a cada publicação, para o celular baixar a atualização
+          sed -i "s/const VERSION = '[^']*'/const VERSION = 'foco-${GITHUB_SHA::8}'/" _site/sw.js
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+      - id: deploy
+        uses: actions/deploy-pages@v4
