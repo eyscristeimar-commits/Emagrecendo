@@ -129,6 +129,7 @@ jobs:
 
   site:
     needs: servidor
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     environment:
       name: github-pages
@@ -136,7 +137,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ needs.servidor.outputs.sha }}
+          ref: ${{ needs.servidor.outputs.sha || github.sha }}
       - name: Montar site
         run: |
           mkdir _site
