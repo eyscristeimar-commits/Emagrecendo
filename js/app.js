@@ -47,6 +47,7 @@ async function boot() {
 
 let pendingRender = false;
 function onData(ev) {
+  if (ev.table === 'auth') { render(); return; }
   if (ev.table === 'error') { toast('Erro ao salvar: ' + (ev.error?.message || ''), 'err'); return; }
   if (ev.table === 'messages' && ev.message && ev.message.profileId !== state.me && !ev.mine) {
     const me = cache.profiles[state.me];
@@ -73,6 +74,7 @@ function updateBadge() {
 // ---------------- Render ----------------
 function render() {
   const app = $('#app');
+  if (db.recoveryMode && db.recoveryMode() && !db.needsLogin()) return renderNewPassword(app);
   if (db.needsLogin()) return renderLogin(app);
   const saved = lsGet('emag:me');
   if (saved && cache.owned.has(saved) && cache.profiles[saved]) state.me = saved;
@@ -109,7 +111,7 @@ function render() {
   app.querySelector('[data-act=settings]').onclick = () => settingsModal();
 }
 
-// ---------------- Login por e-mail (modo online) ----------------
+// ---------------- Login por e-mail e senha (modo online) ----------------
 function renderLogin(app) {
   app.innerHTML = `
     <div class="onb">
@@ -117,32 +119,56 @@ function renderLogin(app) {
       <h1>${esc(CONFIG.APP_NAME)}</h1>
       <p class="muted">Reeducação alimentar, treinos e hidratação em grupo.</p>
       <div class="card">
-        <div id="step1">
-          <label class="field"><span>Seu e-mail</span><input id="email" type="email" inputmode="email" autocomplete="email" placeholder="voce@email.com" value="${esc(lsGet('emag:email') || '')}"></label>
-          <button class="btn block" id="send">Receber código de acesso</button>
-        </div>
-        <div id="step2" hidden>
-          <p class="sm">Enviamos um código para <b id="em"></b>. Digite abaixo (confira o spam).</p>
-          <input id="code" inputmode="numeric" autocomplete="one-time-code" maxlength="8" placeholder="código" class="code">
-          <button class="btn block mt" id="verify">Entrar</button>
-          <button class="link sm mt" id="back">Usar outro e-mail</button>
-        </div>
+        <div class="seg mb"><button data-m="in" class="on">Entrar</button><button data-m="up">Criar conta</button></div>
+        <label class="field"><span>E-mail</span><input id="email" type="email" inputmode="email" autocomplete="email" placeholder="voce@email.com" value="${esc(lsGet('emag:email') || '')}"></label>
+        <label class="field"><span>Senha</span><input id="pass" type="password" autocomplete="current-password" placeholder="mínimo 6 caracteres"></label>
+        <button class="btn block" id="go">Entrar</button>
+        <button class="link sm mt" id="forgot">Esqueci minha senha</button>
       </div>
     </div>`;
+  let m = 'in';
+  app.querySelectorAll('[data-m]').forEach((b) => b.onclick = () => {
+    m = b.dataset.m; app.querySelectorAll('[data-m]').forEach((x) => x.classList.toggle('on', x === b));
+    $('#go').textContent = m === 'in' ? 'Entrar' : 'Criar conta';
+    $('#pass').autocomplete = m === 'in' ? 'current-password' : 'new-password';
+  });
   const email = () => $('#email').value.trim().toLowerCase();
-  $('#send').onclick = async (e) => {
+  const go = async (e) => {
+    const pass = $('#pass').value;
     if (!/^\S+@\S+\.\S+$/.test(email())) return toast('Digite um e-mail válido', 'err');
-    busy(e.target, true, 'Enviando…');
-    try { await db.loginEmail(email()); lsSet('emag:email', email()); $('#em').textContent = email(); $('#step1').hidden = true; $('#step2').hidden = false; $('#code').focus(); }
+    if (pass.length < 6) return toast('A senha precisa ter pelo menos 6 caracteres', 'err');
+    busy(e.target, true, 'Aguarde…');
+    try {
+      lsSet('emag:email', email());
+      if (m === 'in') await db.signIn(email(), pass);
+      else if (!(await db.signUp(email(), pass))) { busy(e.target, false); toast('Conta criada! Confirme pelo link que chegou no seu e-mail e depois entre.'); return; }
+      render();
+    } catch (err) {
+      busy(e.target, false);
+      const msg = /invalid login/i.test(err.message) ? 'E-mail ou senha incorretos' : /already registered/i.test(err.message) ? 'Esse e-mail já tem conta. Use "Entrar".' : err.message;
+      toast(msg, 'err');
+    }
+  };
+  $('#go').onclick = go;
+  $('#pass').onkeydown = (e) => { if (e.key === 'Enter') $('#go').click(); };
+  $('#forgot').onclick = async () => {
+    if (!/^\S+@\S+\.\S+$/.test(email())) return toast('Digite seu e-mail primeiro', 'err');
+    try { await db.resetPassword(email()); toast('Enviamos um link para criar uma senha nova. Confira o e-mail (e o spam).'); }
     catch (err) { toast(err.message, 'err'); }
-    busy(e.target, false);
   };
-  $('#verify').onclick = async (e) => {
-    busy(e.target, true, 'Entrando…');
-    try { await db.verifyCode(lsGet('emag:email') || email(), $('#code').value.trim()); render(); }
-    catch (err) { busy(e.target, false); toast('Código inválido ou expirado', 'err'); }
+}
+
+function renderNewPassword(app) {
+  app.innerHTML = `<div class="onb"><div class="logo">🔑</div><h1>Nova senha</h1>
+    <div class="card"><label class="field"><span>Digite a nova senha</span><input id="np" type="password" autocomplete="new-password"></label>
+    <button class="btn block" id="save">Salvar senha</button></div></div>`;
+  $('#save').onclick = async (e) => {
+    const v = $('#np').value;
+    if (v.length < 6) return toast('Mínimo 6 caracteres', 'err');
+    busy(e.target, true, 'Salvando…');
+    try { await db.setNewPassword(v); history.replaceState(null, '', location.pathname); toast('Senha alterada ✅'); location.reload(); }
+    catch (err) { busy(e.target, false); toast(err.message, 'err'); }
   };
-  $('#back').onclick = () => { $('#step1').hidden = false; $('#step2').hidden = true; };
 }
 
 // ---------------- Quem é você? ----------------

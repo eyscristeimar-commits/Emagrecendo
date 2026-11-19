@@ -67,22 +67,20 @@ jobs:
           # a CLI lê a senha de SUPABASE_DB_PASSWORD; as versões mudaram o nome da opção, então tenta as duas
           supabase db push --remote --yes || supabase db push --linked --yes
 
-      - name: Login por e-mail (código de 6 dígitos)
+      - name: Login por e-mail e senha
         if: steps.check.outputs.ok == 'true'
         run: |
           BODY=$(jq -n --arg site "$SITE" '{
             site_url: $site,
             uri_allow_list: ($site + "**"),
             external_anonymous_users_enabled: false,
-            mailer_subjects_magic_link: "Seu código de acesso ao Foco Total",
-            mailer_templates_magic_link_content: "<h2>Foco Total</h2><p>Seu código de acesso é:</p><h1 style=\"letter-spacing:6px\">{{ .Token }}</h1><p>Ou toque no link: <a href=\"{{ .ConfirmationURL }}\">entrar no app</a></p>",
-            mailer_subjects_confirmation: "Seu código de acesso ao Foco Total",
-            mailer_templates_confirmation_content: "<h2>Foco Total</h2><p>Seu código de acesso é:</p><h1 style=\"letter-spacing:6px\">{{ .Token }}</h1><p>Ou toque no link: <a href=\"{{ .ConfirmationURL }}\">entrar no app</a></p>"
+            mailer_autoconfirm: true,
+            password_min_length: 6
           }')
           CODE=$(curl -sS -o resp.txt -w "%{http_code}" -X PATCH "https://api.supabase.com/v1/projects/$REF/config/auth" \
             -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" -H "Content-Type: application/json" -d "$BODY")
           echo "HTTP $CODE"; head -c 600 resp.txt; echo; rm -f resp.txt
-          [ "$CODE" -lt 300 ] || echo "::warning::Não foi possível ajustar o e-mail de login automaticamente (HTTP $CODE)."
+          [ "$CODE" -lt 300 ] || echo "::warning::Não foi possível ajustar o login automaticamente (HTTP $CODE)."
 
       - name: Segredos das funções
         if: steps.check.outputs.ok == 'true'

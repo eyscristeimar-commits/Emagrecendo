@@ -89,20 +89,36 @@ export const userEmail = () => currentEmail;
 async function initSupabase() {
   const { createClient } = await import('https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/+esm');
   sb = createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_ANON_KEY, { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true } });
+  recovering = /type=recovery/.test(location.hash);
+  sb.auth.onAuthStateChange((ev) => { if (ev === 'PASSWORD_RECOVERY') { recovering = true; emit({ table: 'auth' }); } });
   const { data: { session } } = await sb.auth.getSession();
   if (session) await afterLogin(session);
 }
 
-// Login por e-mail: o Supabase envia um código de 6 dígitos (e um link) para o e-mail.
-export async function loginEmail(email) {
-  const { error } = await sb.auth.signInWithOtp({ email, options: { shouldCreateUser: true, emailRedirectTo: location.origin + location.pathname } });
-  if (error) throw error;
-}
-export async function verifyCode(email, token) {
-  const { data, error } = await sb.auth.verifyOtp({ email, token, type: 'email' });
+// Login por e-mail e senha (funciona igual no navegador e no app instalado).
+export async function signIn(email, password) {
+  const { data, error } = await sb.auth.signInWithPassword({ email, password });
   if (error) throw error;
   await afterLogin(data.session);
 }
+export async function signUp(email, password) {
+  const { data, error } = await sb.auth.signUp({ email, password, options: { emailRedirectTo: location.origin + location.pathname } });
+  if (error) throw error;
+  if (!data.session) return false; // precisa confirmar pelo e-mail
+  await afterLogin(data.session);
+  return true;
+}
+export async function resetPassword(email) {
+  const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo: location.origin + location.pathname });
+  if (error) throw error;
+}
+export async function setNewPassword(password) {
+  const { data, error } = await sb.auth.updateUser({ password });
+  if (error) throw error;
+  return data;
+}
+export const recoveryMode = () => recovering;
+let recovering = false;
 export async function logout() {
   if (sb) await sb.auth.signOut();
   try { localStorage.removeItem('emag:me'); } catch {}
