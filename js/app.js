@@ -145,7 +145,7 @@ function renderLogin(app) {
       render();
     } catch (err) {
       busy(e.target, false);
-      const msg = /invalid login/i.test(err.message) ? 'E-mail ou senha incorretos' : /already registered/i.test(err.message) ? 'Esse e-mail já tem conta. Use "Entrar".' : err.message;
+      const msg = /invalid login/i.test(err.message) ? 'E-mail ou senha incorretos. Se não lembra a senha, toque em "Esqueci minha senha".' : /already registered/i.test(err.message) ? 'Esse e-mail já tem conta. Use "Entrar" ou toque em "Esqueci minha senha".' : err.message;
       toast(msg, 'err');
     }
   };
